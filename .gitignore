@@ -1,0 +1,10 @@
+# 카드 사용내역 등 실데이터는 올리지 않는다 (샘플 집주소 CSV만 예외)
+*.xlsx
+*.xls
+*.csv
+!sample/집주소_샘플.csv
+
+# 엑셀 임시 파일 · OS 파일
+~$*
+Thumbs.db
+.DS_Store

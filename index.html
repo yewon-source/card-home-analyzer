@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>법인카드 집근처 사용 분석</title>
+<link rel="stylesheet" href="style.css?v=5">
+<script src="vendor/xlsx.full.min.js"></script>
+<script>window.XLSX || document.write('<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"><\/script>');</script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo" aria-hidden="true">◎</span>법인카드 집근처 사용 분석</div>
+  <div class="topbar-right">
+    <span id="keyStatus" class="pill warn">카카오 키 미설정</span>
+    <span id="aiStatus" class="pill warn">Gemini 키 미설정</span>
+    <button id="btnSettings" class="btn ghost" type="button">설정</button>
+  </div>
+</header>
+
+<main>
+  <div id="fileWarn" class="banner" hidden>
+<b>파일을 직접 열면 카카오 지도가 동작하지 않습니다.</b>
+    엑셀 업로드는 가능하지만, 지도·주소 검색은 웹 주소(http/https)로 열어야 합니다.
+    웹에 올린 주소로 접속하거나, 폴더의 <code>start.bat</code>을 실행해 주세요.
+    <div class="banner-actions">
+      <a class="btn primary" href="http://localhost:8080/">http://localhost:8080 으로 열기</a>
+      <span class="small">열리지 않으면 <code>start.bat</code>을 먼저 실행한 뒤 다시 누르세요.</span>
+    </div>
+  </div>
+  <section class="steps">
+    <div class="card step">
+      <h2><span class="num">1</span>카드 사용내역 불러오기</h2>
+      <div class="drop" id="dropZone">
+        <strong>엑셀 / CSV 파일을 끌어다 놓거나 클릭</strong>
+        <span>순번 · 카드번호 · 이용자명 · 이용일 · 가맹점명 · 이용금액 · 가맹점 주소 … 리터당단가</span>
+        <!-- 실제 파일 입력이 영역 전체를 덮어 클릭·드롭을 브라우저가 직접 처리한다 -->
+        <input type="file" id="fileInput" class="drop-input" accept=".xlsx,.xls,.csv" aria-label="카드 사용내역 파일 선택">
+      </div>
+      <div id="fileInfo" class="muted small"></div>
+    </div>
+
+    <div class="card step">
+      <h2><span class="num">2</span>이용자 집 주소</h2>
+      <div class="row-actions">
+        <button id="btnHomeImport" class="btn small" type="button">CSV/엑셀 가져오기</button>
+        <button id="btnHomeExport" class="btn small" type="button">CSV 내보내기</button>
+        <input type="file" id="homeFile" accept=".csv,.xlsx,.xls" hidden>
+      </div>
+      <div id="homeList" class="home-list"><p class="muted small">사용내역을 불러오면 이용자 목록이 나타납니다.</p></div>
+    </div>
+
+    <div class="card step">
+      <h2><span class="num">3</span>분석 기준</h2>
+      <div class="field">
+        <div class="field-label">집 근처 반경 <b id="radiusLabel">1.0km</b></div>
+        <input type="range" id="radius" min="100" max="5000" step="100" value="1000">
+        <div class="presets">
+          <button type="button" class="chip" data-r="500">500m</button>
+          <button type="button" class="chip" data-r="1000">1km</button>
+          <button type="button" class="chip" data-r="2000">2km</button>
+          <button type="button" class="chip" data-r="3000">3km</button>
+        </div>
+      </div>
+      <label class="check"><input type="checkbox" id="excludeOnline" checked> 온라인·PG 결제 제외 <span class="muted small">(가맹점 주소가 결제대행사 본사라 위치 의미 없음)</span></label>
+      <div class="field inline">
+        <span class="field-label">심야 시간</span>
+        <select id="nightStart"></select> 시 ~ <select id="nightEnd"></select> 시
+      </div>
+      <details class="holidays">
+        <summary>공휴일 목록 (주말은 자동 포함)</summary>
+        <textarea id="holidayText" rows="8" spellcheck="false"></textarea>
+        <div class="muted small">한 줄에 하나씩 <code>YYYY-MM-DD 이름</code></div>
+      </details>
+      <button id="btnRun" class="btn primary block" type="button">분석 실행</button>
+      <div id="progress" class="progress" hidden><div class="bar"><i></i></div><span></span></div>
+    </div>
+  </section>
+
+  <section id="results" hidden>
+    <div class="kpis" id="kpis"></div>
+
+    <div class="card" id="anomalyCard">
+      <div class="card-head wrap">
+        <h3>이상징후 탐지 결과</h3>
+        <label class="inline-field small">고액 기준 <input type="number" id="bigAmount" min="0" step="10000"> 원 이상</label>
+        <span class="spacer"></span>
+        <button type="button" id="btnAnomToAi" class="btn small">✦ AI로 요약하기</button>
+      </div>
+      <div id="anomalyGrid" class="anomaly-grid"></div>
+      <div id="anomalyFoot" class="muted small anom-foot"></div>
+    </div>
+
+    <div class="grid2">
+      <div class="card map-card">
+        <div class="card-head">
+          <h3>지도</h3>
+          <select id="mapUser"></select>
+          <div class="legend">
+            <span><i class="lg home"></i>집</span>
+            <span><i class="lg near"></i>반경 내 가맹점</span>
+            <span><i class="lg far"></i>반경 밖 가맹점</span>
+          </div>
+        </div>
+        <div id="map"></div>
+        <div class="muted small map-hint">점을 클릭하면 해당 가맹점의 사용내역이 보입니다. 숫자는 사용 건수입니다.</div>
+      </div>
+      <div class="side">
+        <div class="card">
+          <h3>이용자별 요약</h3>
+          <div class="table-wrap short"><table id="userTable" class="tbl"></table></div>
+        </div>
+        <div class="card">
+          <h3>집에서 거리별 사용 건수</h3>
+          <div id="distChart" class="hbar"></div>
+        </div>
+        <div class="card">
+          <h3>평일 · 휴일 비교</h3>
+          <div class="table-wrap"><table id="dayTable" class="tbl"></table></div>
+          <div id="dayNote" class="muted small day-note"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head wrap">
+        <h3>상세 내역</h3>
+        <select id="fUser"></select>
+        <select id="fView">
+          <option value="all">전체</option>
+          <option value="near">집 근처만</option>
+          <option value="high">집 근처 + 휴일·심야</option>
+          <option value="off">휴일·심야 전체</option>
+          <option value="excluded">분석 제외·위치 미확인</option>
+        </select>
+        <select id="fDay" aria-label="평일/휴일 구분">
+          <option value="all">평일·휴일 전체</option>
+          <option value="weekday">평일만</option>
+          <option value="holiday">휴일만 (주말+공휴일)</option>
+          <option value="weekend">주말만</option>
+          <option value="publicHoliday">공휴일만</option>
+        </select>
+        <input type="search" id="fQuery" placeholder="가맹점·주소·업종 검색">
+        <span id="fCount" class="muted small"></span>
+        <button id="btnExport" class="btn small" type="button">결과 엑셀 저장</button>
+      </div>
+      <div class="table-wrap"><table id="txTable" class="tbl"></table></div>
+    </div>
+
+    <div class="card" id="aiCard">
+      <div class="card-head wrap">
+        <h3>✦ AI 분석 · 보고서 <span class="muted small">(Gemini)</span></h3>
+        <div id="aiTabs" class="seg">
+          <button type="button" data-tab="summary">이상징후 요약</button>
+          <button type="button" data-tab="report">경영진 보고서</button>
+        </div>
+        <span class="spacer"></span>
+        <button type="button" id="btnAiSummary" class="btn small">이상징후 요약</button>
+        <button type="button" id="btnAiReport" class="btn small primary">경영진 보고서 작성</button>
+        <button type="button" id="btnAiStop" class="btn small" hidden>중지</button>
+      </div>
+      <div class="ai-privacy small">
+        <label class="check-inline"><input type="checkbox" id="aiAnon" checked> 이용자명을 가명(직원01…)으로 바꿔 전송하고 결과에서 실명으로 되돌리기</label>
+        <span class="muted">Gemini로 보내는 정보: 집계 수치, 이상징후 거래의 일자·시간·가맹점명·업종·금액·지역(시·구)·집까지 거리. 카드번호·승인번호·사업자번호·상세주소·집주소는 보내지 않습니다.</span>
+      </div>
+      <div id="aiStale" class="ai-stale small" hidden>분석 조건이나 데이터가 바뀌어 이 결과는 이전 기준입니다. 다시 생성해 주세요.</div>
+      <article id="aiOutput" class="report-doc"></article>
+      <div class="ai-foot">
+        <span id="aiMeta" class="muted small"></span>
+        <span class="spacer"></span>
+        <button type="button" id="btnAiCopy" class="btn small">복사</button>
+        <button type="button" id="btnAiWord" class="btn small">Word 저장</button>
+        <button type="button" id="btnAiPrint" class="btn small">인쇄 / PDF</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<dialog id="settingsDlg">
+  <form method="dialog" class="dlg">
+    <h3>카카오 지도 설정</h3>
+    <label class="field">
+      <span class="field-label">JavaScript 키</span>
+      <input type="text" id="kakaoKey" placeholder="카카오 디벨로퍼스 > 내 애플리케이션 > 앱 키 > JavaScript 키" autocomplete="off">
+    </label>
+    <ol class="muted small help">
+      <li><a href="https://developers.kakao.com/console/app" target="_blank" rel="noopener">카카오 디벨로퍼스</a>에서 애플리케이션을 만듭니다.</li>
+      <li>[플랫폼 > Web]에 사이트 도메인 <code id="originText"></code> 을 등록합니다.</li>
+      <li>[카카오맵] 서비스 사용 설정을 <b>ON</b>으로 켭니다.</li>
+      <li>JavaScript 키를 위 칸에 붙여넣고 저장합니다.</li>
+    </ol>
+    <hr class="dlg-sep">
+    <h3>Gemini AI 설정</h3>
+    <label class="field">
+      <span class="field-label">Gemini API 키</span>
+      <input type="password" id="geminiKey" placeholder="Google AI Studio에서 발급한 API 키" autocomplete="off">
+    </label>
+    <div class="field">
+      <span class="field-label">모델</span>
+      <div class="row-inline">
+        <input type="text" id="geminiModel" list="geminiModels" placeholder="비워 두면 최신 Flash 모델 자동 선택" autocomplete="off">
+        <button type="button" id="btnGeminiTest" class="btn small">연결 확인</button>
+      </div>
+      <datalist id="geminiModels"></datalist>
+    </div>
+    <ul class="muted small help">
+      <li>키 발급: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> → API 키 만들기</li>
+      <li>[연결 확인]을 누르면 쓸 수 있는 모델 목록을 불러와 최신 Flash 모델을 골라 줍니다. 비워 두면 자동으로 고릅니다.</li>
+      <li>구글이 모델을 종료하면 다른 모델로 자동 전환해 다시 시도합니다.</li>
+      <li>키는 이 브라우저에만 저장됩니다. 무료 등급 키는 입력 내용이 Google 서비스 개선에 쓰일 수 있으니 회사 정책을 확인하세요.</li>
+    </ul>
+    <div class="dlg-actions">
+      <button type="button" id="btnClearCache" class="btn small ghost">주소 좌표 캐시 비우기</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" onclick="this.closest('dialog').close('cancel')">닫기</button>
+      <button value="save" id="btnSaveKey" class="btn primary">저장</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="pickDlg">
+  <div class="dlg wide">
+    <h3 id="pickTitle">지도에서 집 위치 지정</h3>
+    <div class="pick-search">
+      <input type="search" id="pickQuery" placeholder="주소 또는 장소명으로 이동">
+      <button type="button" id="btnPickSearch" class="btn small">찾기</button>
+    </div>
+    <div id="pickMap"></div>
+    <div class="muted small">지도를 클릭하면 그 위치가 집으로 지정됩니다.</div>
+    <div class="dlg-actions">
+      <span class="spacer"></span>
+      <button type="button" id="btnPickCancel" class="btn">취소</button>
+      <button type="button" id="btnPickSave" class="btn primary" disabled>이 위치로 저장</button>
+    </div>
+  </div>
+</dialog>
+
+<div id="toast" role="status"></div>
+<script src="app.js?v=6"></script>
+<script src="ai.js?v=5"></script>
+</body>
+</html>
